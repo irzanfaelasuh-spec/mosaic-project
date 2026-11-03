@@ -263,22 +263,97 @@ class MainActivity : Activity() {
         body.addView(visual, lp(-1, -2, top = 10))
 
         val ai = card()
+        val errorColor = Color.rgb(239, 139, 159)
         ai.addView(label("AI CONNECTION", 9f, prefs.accent(), true))
-        ai.addView(label("Backend URL", 10f, MUTED, false), lp(-1, -2, top = 9))
-        val endpoint = EditText(this).apply {
-            setSingleLine(true); textSize = 11f; setTextColor(TEXT); setHintTextColor(MUTED); hint = "https://your-backend.example.com"
-            setText(prefs.apiEndpoint); background = rounded(Color.rgb(10,18,27), 11); setPadding(dp(12), dp(11), dp(12), dp(11))
-        }
-        ai.addView(endpoint, lp(-1, dp(46), top = 7))
-        ai.addView(label("Backend access token (required)", 10f, MUTED, false), lp(-1, -2, top = 9))
-        val token = EditText(this).apply {
-            setSingleLine(true); textSize = 11f; setTextColor(TEXT); setHintTextColor(MUTED); hint = "MOSAIC_CLIENT_TOKEN"
-            setText(prefs.apiToken); inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+        ai.addView(label("MOSAIC talks directly to Google's Gemini API with your own API key. No server or backend is needed.", 10f, MUTED, false), lp(-1, -2, top = 7))
+        ai.addView(label("Gemini API key", 10f, MUTED, false), lp(-1, -2, top = 11))
+        val savedKeyLabel = label("", 9f, prefs.accent(), false)
+        fun savedKeyText(): String = prefs.maskedGeminiApiKey()?.let { "Saved key: $it" } ?: "No API key saved yet."
+        savedKeyLabel.text = savedKeyText()
+        ai.addView(savedKeyLabel, lp(-1, -2, top = 5))
+        val keyField = EditText(this).apply {
+            setSingleLine(true); textSize = 11f; setTextColor(TEXT); setHintTextColor(MUTED); hint = "Paste your Gemini API key"
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
             background = rounded(Color.rgb(10,18,27), 11); setPadding(dp(12), dp(11), dp(12), dp(11))
         }
-        ai.addView(token, lp(-1, dp(46), top = 7))
-        ai.addView(label("The app sends requests to this backend. Keep GEMINI_API_KEY on the server, never inside the APK.", 10f, MUTED, false), lp(-1, -2, top = 7))
-        ai.addView(action("SAVE AI CONNECTION") { prefs.apiEndpoint = endpoint.text.toString(); prefs.apiToken = token.text.toString(); toast("Backend settings saved") }, lp(-1, dp(42), top = 9))
+        ai.addView(keyField, lp(-1, dp(46), top = 7))
+        ai.addView(label("Model", 10f, MUTED, false), lp(-1, -2, top = 11))
+        val modelField = EditText(this).apply {
+            setSingleLine(true); textSize = 11f; setTextColor(TEXT); setHintTextColor(MUTED); hint = AiClient.DEFAULT_MODEL
+            setText(prefs.aiModel); inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            background = rounded(Color.rgb(10,18,27), 11); setPadding(dp(12), dp(11), dp(12), dp(11))
+        }
+        ai.addView(modelField, lp(-1, dp(46), top = 7))
+        ai.addView(label("Default: ${AiClient.DEFAULT_MODEL}. If you hit rate limits on a free key, try gemini-3.7-flash or gemini-3.6-flash.", 9f, MUTED, false), lp(-1, -2, top = 6))
+        val status = label("", 10f, MUTED, false)
+        fun setStatus(message: String, ok: Boolean?) { status.text = message; status.setTextColor(when (ok) { true -> prefs.accent(); false -> errorColor; else -> MUTED }) }
+        ai.addView(action("SAVE") {
+            val typedModel = modelField.text.toString().trim()
+            if (typedModel.isNotEmpty() && AiClient.normalizeModel(typedModel) == null) {
+                setStatus("Model name looks invalid. Use a name such as ${AiClient.DEFAULT_MODEL}.", false)
+                return@action
+            }
+            prefs.aiModel = typedModel
+            modelField.setText(prefs.aiModel)
+            val typedKey = keyField.text.toString()
+            if (typedKey.isBlank()) {
+                setStatus(if (prefs.geminiApiKeyOrNull() != null) "Model saved. The existing API key was not changed." else "Model saved. Paste your Gemini API key above to enable AI.", true)
+                return@action
+            }
+            val saved = prefs.saveGeminiApiKey(typedKey)
+            if (saved.isSuccess) {
+                keyField.setText("")
+                savedKeyLabel.text = savedKeyText()
+                setStatus("API key saved on this device (encrypted). Tap TEST CONNECTION to verify it.", true)
+            } else {
+                setStatus(saved.exceptionOrNull()?.message ?: "The key could not be saved.", false)
+            }
+        }, lp(-1, dp(42), top = 11))
+        var keyVisible = false
+        val showHide = secondaryAction("SHOW KEY") { }
+        showHide.setOnClickListener {
+            keyVisible = !keyVisible
+            val cursor = keyField.selectionEnd
+            keyField.inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or
+                (if (keyVisible) android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD else android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD)
+            keyField.setSelection(cursor.coerceIn(0, keyField.text.length))
+            showHide.text = if (keyVisible) "HIDE KEY" else "SHOW KEY"
+        }
+        val clearKey = secondaryAction("CLEAR KEY") {
+            prefs.clearGeminiApiKey()
+            keyField.setText("")
+            savedKeyLabel.text = savedKeyText()
+            setStatus("API key removed from this device.", true)
+        }
+        ai.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(showHide, LinearLayout.LayoutParams(0, dp(40), 1f).apply { marginEnd = dp(4) })
+            addView(clearKey, LinearLayout.LayoutParams(0, dp(40), 1f).apply { marginStart = dp(4) })
+        }, lp(-1, -2, top = 8))
+        var testing = false
+        val testButton = secondaryAction("TEST CONNECTION") {
+            if (testing) return@secondaryAction
+            testing = true
+            setStatus("Testing connection…", null)
+            val typedKey = keyField.text.toString()
+            AiClient.testConnection(this, typedKey, modelField.text.toString()) { result ->
+                testing = false
+                val message = result.getOrNull()
+                if (message != null) setStatus(if (typedKey.isNotBlank()) "$message Key not saved yet: tap SAVE to keep it." else message, true)
+                else setStatus(result.exceptionOrNull()?.message ?: "Connection failed.", false)
+            }
+        }
+        val getKey = secondaryAction("GET API KEY") {
+            try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://aistudio.google.com/apikey"))) }
+            catch (e: Exception) { setStatus("Open aistudio.google.com/apikey in your browser to create a key.", null) }
+        }
+        ai.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(testButton, LinearLayout.LayoutParams(0, dp(40), 1f).apply { marginEnd = dp(4) })
+            addView(getKey, LinearLayout.LayoutParams(0, dp(40), 1f).apply { marginStart = dp(4) })
+        }, lp(-1, -2, top = 8))
+        ai.addView(status, lp(-1, -2, top = 10))
+        ai.addView(label("The key is stored encrypted on this device and sent only to Google (generativelanguage.googleapis.com). Prompts and attachments are processed by Google under your own Gemini API account.", 9f, MUTED, false), lp(-1, -2, top = 8))
         body.addView(ai, lp(-1, -2, top = 10))
     }
 
@@ -293,7 +368,7 @@ class MainActivity : Activity() {
         body.addView(features)
         val limits = card()
         limits.addView(label("ANDROID PLATFORM NOTES", 9f, prefs.accent(), true))
-        limits.addView(label("• Shizuku requires its own service to be started by the user. It does not grant every permission automatically.\n• Playback capture only works when the source app permits it.\n• FPS Monitor measures MOSAIC's overlay render loop and reports display refresh rate; it is not a guaranteed per-game FPS sensor.\n• Speech recognition may use the device's recognition provider.\n• AI requires your own backend URL and a server-side Gemini API key.", 10f, MUTED, false), lp(-1, -2, top = 9))
+        limits.addView(label("• Shizuku requires its own service to be started by the user. It does not grant every permission automatically.\n• Playback capture only works when the source app permits it.\n• FPS Monitor measures MOSAIC's overlay render loop and reports display refresh rate; it is not a guaranteed per-game FPS sensor.\n• Speech recognition may use the device's recognition provider.\n• AI Helper and Translate send prompts and attachments directly to Google's Gemini API using your own API key (Settings → AI Connection).", 10f, MUTED, false), lp(-1, -2, top = 9))
         body.addView(limits, lp(-1, -2, top = 10))
         body.addView(label("Built for Android 10+  /  Version 1.0.0", 9f, MUTED, false), lp(-1, -2, top = 16))
     }
