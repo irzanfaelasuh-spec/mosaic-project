@@ -611,7 +611,7 @@ class GradientMeter(context: Context) : View(context) {
         super.onDraw(c); val r = RectF(0f, 0f, width.toFloat(), height.toFloat()); val rad = height / 2f
         p.color = 0xFF182532.toInt(); c.drawRoundRect(r, rad, rad, p)
         p.shader = LinearGradient(0f,0f,width.toFloat(),0f, intArrayOf(Color.rgb(66,210,130), Color.rgb(231,216,76), Color.rgb(245,151,69), Color.rgb(234,75,83)), null, Shader.TileMode.CLAMP)
-        c.save(); c.clipRect(0f, 0f, width * level, height); c.drawRoundRect(r, rad, rad, p); c.restore(); p.shader = null
+        c.save(); c.clipRect(0f, 0f, width.toFloat() * level, height.toFloat()); c.drawRoundRect(r, rad, rad, p); c.restore(); p.shader = null
     }
 }
 
