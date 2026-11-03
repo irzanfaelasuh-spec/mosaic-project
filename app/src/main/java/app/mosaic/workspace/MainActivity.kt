@@ -192,7 +192,7 @@ class MainActivity : Activity() {
         body.addView(hero)
 
         body.addView(label("MODULE LIBRARY", 9f, prefs.accent(), true), lp(-1, -2, top = 20, bottom = 10))
-        val grid = arrayOf(
+        val grid = listOf(
             "Calculator" to "NUM", "Translate" to "TXT", "AI Helper" to "AI",
             "Google Search" to "WEB", "Visualizer" to "FFT", "Voice Meter" to "MIC",
             "Subtitle" to "CC", "FPS Monitor" to "FPS", "Notes" to "DOC",
@@ -458,11 +458,11 @@ class MainActivity : Activity() {
 
     private fun permissionRow(parent: LinearLayout, title: String, detail: String, ok: Boolean, button: String, click: () -> Unit) {
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(12), 0, dp(10)) }
-        val text = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        text.addView(label(title, 11f, TEXT, true))
-        text.addView(label(detail, 9f, MUTED, false), lp(-1, -2, top = 3))
-        row.addView(text, LinearLayout.LayoutParams(0, -2, 1f))
-        val action = TextView(this).apply { text = if (ok) "READY" else button.uppercase(); textSize = 8f; setTextColor(if (ok) prefs.accent() else AMBER); background = rounded(PANEL, 10); setPadding(dp(9), dp(8), dp(9), dp(8)); setOnClickListener { click() } }
+        val textColumn = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        textColumn.addView(label(title, 11f, TEXT, true))
+        textColumn.addView(label(detail, 9f, MUTED, false), lp(-1, -2, top = 3))
+        row.addView(textColumn, LinearLayout.LayoutParams(0, -2, 1f))
+        val action = TextView(this).apply { this.text = if (ok) "READY" else button.uppercase(); textSize = 8f; setTextColor(if (ok) prefs.accent() else AMBER); background = rounded(PANEL, 10); setPadding(dp(9), dp(8), dp(9), dp(8)); setOnClickListener { click() } }
         row.addView(action)
         parent.addView(row)
         parent.addView(View(this).apply { setBackgroundColor(STROKE) }, LinearLayout.LayoutParams(-1, dp(1)))
