@@ -136,7 +136,7 @@ object ToolContentFactory {
             }
         }, LinearLayout.LayoutParams(-1, dp(c, 42)).apply { topMargin = dp(c, 9) })
         root.addView(result, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(c, 9) })
-        addLabel(c, root, "Requires the MOSAIC AI backend URL in Settings.")
+        addLabel(c, root, "Requires your Gemini API key in Settings → AI Connection.")
         return root
     }
 
@@ -387,6 +387,8 @@ class AiPanelView(private val host: FloatingService) : LinearLayout(host) {
     private val fileStatus: TextView
     private val thinking: ThinkingView
     private var attachment: AttachedFile? = null
+    private val history = ArrayList<ChatTurn>()
+    private val modelLabel = TextView(host)
     private var waiting = false
     private var recognizer: SpeechRecognizer? = null
     private var speech: TextToSpeech? = null
@@ -395,7 +397,8 @@ class AiPanelView(private val host: FloatingService) : LinearLayout(host) {
     init {
         orientation = VERTICAL
         setPadding(dp(10), dp(9), dp(10), dp(8))
-        addView(TextView(host).apply { text = "GEMINI 3.7 FLASH  /  AI ASSISTANT"; textSize = 8f; setTextColor(SettingsStore.from(host).accent()); typeface = android.graphics.Typeface.DEFAULT_BOLD })
+        modelLabel.apply { text = headerText(); textSize = 8f; setTextColor(SettingsStore.from(host).accent()); typeface = android.graphics.Typeface.DEFAULT_BOLD }
+        addView(modelLabel)
         speech = TextToSpeech(host) { status -> if (status == TextToSpeech.SUCCESS) speech?.language = Locale.getDefault() }
         addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
             override fun onViewAttachedToWindow(v: View) = Unit
@@ -424,10 +427,16 @@ class AiPanelView(private val host: FloatingService) : LinearLayout(host) {
         row.addView(TextView(host).apply { text = "SAY"; textSize = 8f; gravity = Gravity.CENTER; setTextColor(SettingsStore.from(host).accent()); setOnClickListener { speakLastResponse() } }, LinearLayout.LayoutParams(dp(34), dp(43)))
         row.addView(TextView(host).apply { text = "↑"; textSize = 19f; gravity = Gravity.CENTER; setTextColor(0xFF071416.toInt()); background = bg(SettingsStore.from(host).accent(), dp(10)); setOnClickListener { send() } }, LinearLayout.LayoutParams(dp(38), dp(43)))
         addView(row, LinearLayout.LayoutParams(-1, dp(43)).apply { topMargin = dp(5) })
-        addView(TextView(host).apply { text = "AI responses may be inaccurate. Requests go to your configured server."; textSize = 7.5f; setTextColor(0xFF72838E.toInt()); gravity = Gravity.CENTER }, LinearLayout.LayoutParams(-1, dp(19)))
+        addView(TextView(host).apply { text = "AI may be inaccurate. Sent directly to Google Gemini with your key."; textSize = 7.5f; setTextColor(0xFF72838E.toInt()); gravity = Gravity.CENTER }, LinearLayout.LayoutParams(-1, dp(19)))
     }
 
-    fun attach(file: AttachedFile) { attachment = file; fileStatus.text = "ATTACHED  /  ${file.name}" }
+    private fun headerText() = AiClient.modelLabel(SettingsStore.from(host).aiModel) + "  /  AI ASSISTANT"
+
+    fun attach(file: AttachedFile) {
+        if (file.base64.isBlank()) { fileStatus.text = "Attachment could not be read."; return }
+        if (!AiClient.isSupportedAttachment(file)) { fileStatus.text = "Unsupported file type. Use image, PDF, text, ZIP or Office."; return }
+        attachment = file; fileStatus.text = "ATTACHED  /  ${file.name}"
+    }
 
     private fun startVoiceInput() {
         if (host.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
@@ -481,18 +490,22 @@ class AiPanelView(private val host: FloatingService) : LinearLayout(host) {
         if (prompt.isBlank() && attachment == null) return
         input.setText("")
         messages.addView(bubble(prompt.ifBlank { "Please inspect the attached file." }, true))
+        history.add(ChatTurn(true, prompt.ifBlank { "Please inspect the attached file and explain its contents." }))
         waiting = true; thinking.visibility = VISIBLE; thinking.start()
         val file = attachment; attachment = null; fileStatus.text = "No attachment"
-        val transcript = (0 until messages.childCount)
-            .mapNotNull { (messages.getChildAt(it) as? TextView)?.text?.toString() }
-            .joinToString("\n\n")
-        val effectivePrompt = if (prompt.isBlank()) "Please inspect this attachment and explain its contents.\n\n$transcript" else transcript
-        AiClient.generate(host, effectivePrompt, file) { result ->
-            Handler(Looper.getMainLooper()).post {
-                thinking.stop(); thinking.visibility = GONE; waiting = false
-                lastResponse = result.getOrElse { "Request failed: ${it.message}" }
-                messages.addView(bubble(lastResponse, false))
+        modelLabel.text = headerText()
+        AiClient.chat(host, history.toList(), file) { result ->
+            thinking.stop(); thinking.visibility = GONE; waiting = false
+            val reply = result.getOrNull()
+            if (reply != null) {
+                history.add(ChatTurn(false, reply))
+                lastResponse = reply
+            } else {
+                // The failed message is not part of the conversation Gemini has seen; drop it so a retry stays valid.
+                if (history.isNotEmpty() && history[history.lastIndex].fromUser) history.removeAt(history.lastIndex)
+                lastResponse = "Request failed: ${result.exceptionOrNull()?.message ?: "unknown error"}"
             }
+            messages.addView(bubble(lastResponse, false))
         }
     }
 
